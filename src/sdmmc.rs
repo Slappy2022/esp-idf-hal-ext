@@ -24,6 +24,8 @@ const DEFAULT_HOST_CONFIG: sdmmc_host_t = sdmmc_host_t {
     io_int_wait: Some(sdmmc_host_io_int_wait),
     command_timeout_ms: 0,
 };
+const GENERIC_ESP_ERROR: EspError =
+    EspError::from_non_zero(unsafe { core::num::NonZeroI32::new_unchecked(-1) });
 
 impl Sdmmc {
     pub fn new(base_path: &'static str) -> Result<Self, EspError> {
@@ -82,15 +84,66 @@ impl Sdmmc {
             })
         }
     }
-    pub fn open(&self, name: &str, mode: &str) -> Option<File> {
+    pub fn open_file(&self, name: &str, mode: &str) -> Option<File> {
         unsafe {
-            let file = fopen(
+            fopen(
                 HeaplessCStr::new_multi(&[self.base_path, "/", name])
                     .unwrap()
                     .ptr(),
                 HeaplessCStr::new(mode).unwrap().ptr(),
-            );
-            file.as_mut().map(|file| File { file })
+            )
+            .as_mut()
+            .map(|file| File { file })
+        }
+    }
+    pub fn open_directory(&self, name: &str) -> Option<Directory> {
+        unsafe {
+            opendir(
+                HeaplessCStr::new_multi(&[self.base_path, "/", name])
+                    .unwrap()
+                    .ptr(),
+            )
+            .as_mut()
+            .map(|dir| Directory { dir })
+        }
+    }
+    pub fn stat(&self, name: &str) -> Option<stat> {
+        let mut s = stat::default();
+        unsafe {
+            match stat(
+                HeaplessCStr::new_multi(&[self.base_path, "/", name])
+                    .unwrap()
+                    .ptr(),
+                &mut s,
+            ) {
+                0 => Some(s),
+                _ => None,
+            }
+        }
+    }
+    pub fn mkdir(&self, name: &str) -> Result<(), EspError> {
+        unsafe {
+            match mkdir(
+                HeaplessCStr::new_multi(&[self.base_path, "/", name])
+                    .unwrap()
+                    .ptr(),
+                0x0666, // rw
+            ) {
+                0 => Ok(()),
+                _ => Err(GENERIC_ESP_ERROR),
+            }
+        }
+    }
+    pub fn rmdir(&self, name: &str) -> Result<(), EspError> {
+        unsafe {
+            match rmdir(
+                HeaplessCStr::new_multi(&[self.base_path, "/", name])
+                    .unwrap()
+                    .ptr(),
+            ) {
+                0 => Ok(()),
+                _ => Err(GENERIC_ESP_ERROR),
+            }
         }
     }
 }
@@ -151,6 +204,42 @@ impl Drop for File {
         unsafe { fclose(self.file) };
     }
 }
+pub struct Directory {
+    dir: *mut DIR,
+}
+impl Directory {
+    pub fn ls(&self) -> LsIterator<'_> {
+        LsIterator { dir: &self }
+    }
+}
+impl Drop for Directory {
+    fn drop(&mut self) {
+        unsafe { closedir(self.dir) };
+    }
+}
+
+pub struct LsIterator<'a> {
+    dir: &'a Directory,
+}
+impl Iterator for LsIterator<'_> {
+    type Item = LsEntry;
+    fn next(&mut self) -> Option<<Self as Iterator>::Item> {
+        unsafe {
+            readdir(self.dir.dir)
+                .as_mut()
+                .map(|entry| LsEntry { entry })
+        }
+    }
+}
+
+pub struct LsEntry {
+    entry: *mut dirent,
+}
+impl LsEntry {
+    pub fn name(&self) -> Result<&str, core::str::Utf8Error> {
+        unsafe { core::ffi::CStr::from_ptr((*self.entry).d_name.as_ptr()).to_str() }
+    }
+}
 
 const PARTITION_LABEL_MAX_LEN: usize = 128;
 struct HeaplessCStr {
@@ -160,7 +249,7 @@ impl HeaplessCStr {
     fn new(s: &str) -> Result<Self, EspError> {
         let mut data = heapless::Vec::<u8, { PARTITION_LABEL_MAX_LEN + 1 }>::new();
         data.extend(s.bytes());
-        data.push(0x00).map_err(|_| EspError::from(-1).unwrap())?;
+        data.push(0x00).map_err(|_| GENERIC_ESP_ERROR)?;
         Ok(Self { data })
     }
     fn new_multi(s: &[&str]) -> Result<Self, EspError> {
@@ -168,7 +257,7 @@ impl HeaplessCStr {
         for s in s {
             data.extend(s.bytes());
         }
-        data.push(0x00).map_err(|_| EspError::from(-1).unwrap())?;
+        data.push(0x00).map_err(|_| GENERIC_ESP_ERROR)?;
         Ok(Self { data })
     }
     fn ptr(&self) -> *const core::ffi::c_char {

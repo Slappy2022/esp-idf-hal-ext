@@ -23,7 +23,7 @@ fn main() -> anyhow::Result<()> {
         );
         {
             // write
-            let file = match sdcard.open("write.txt", "w") {
+            let file = match sdcard.open_file("write.txt", "w") {
                 Some(f) => f,
                 None => {
                     println!("File not found");
@@ -37,7 +37,7 @@ fn main() -> anyhow::Result<()> {
         }
         {
             // read
-            let file = match sdcard.open("write.txt", "r") {
+            let file = match sdcard.open_file("write.txt", "r") {
                 Some(f) => f,
                 None => {
                     println!("File not found");
@@ -55,6 +55,35 @@ fn main() -> anyhow::Result<()> {
             match data == "write" {
                 true => println!("read success!"),
                 false => println!("read failure :("),
+            }
+        }
+        {
+            // mkdir/rmdir
+            let _ = sdcard.rmdir("mydir");
+            if let Err(e) = sdcard.mkdir("mydir") {
+                println!("{e:?}");
+                continue;
+            }
+            if let Err(e) = sdcard.rmdir("mydir") {
+                println!("{e:?}");
+                continue;
+            }
+            println!("mkdir success");
+        }
+        {
+            // ls root
+            let dir = match sdcard.open_directory("") {
+                Some(dir) => dir,
+                None => {
+                    println!("Couldn't open dir");
+                    continue;
+                }
+            };
+            for entry in dir.ls() {
+                match entry.name() {
+                    Ok(name) => println!("{name}"),
+                    Err(e) => println!("{e:?}"),
+                }
             }
         }
         led.toggle()?;
