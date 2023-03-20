@@ -6,6 +6,8 @@ pub struct Sdmmc {
     card: *mut sdmmc_card_t,
 }
 
+unsafe impl Send for Sdmmc {}
+
 const DEFAULT_HOST_CONFIG: sdmmc_host_t = sdmmc_host_t {
     flags: 0x000F, // 1 bit, 4 bit, 8 bit, ddr
     slot: 1,
